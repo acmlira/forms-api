@@ -20,6 +20,7 @@ import (
 
 type CreateFormRequest struct {
 	Question string `json:"question" validate:"required"`
+	Answer   string `json:"answer" validate:"required"`
 }
 
 // CreateForm godoc
@@ -40,16 +41,15 @@ func CreateForm(db *pgxpool.Pool) echo.HandlerFunc {
 			return c.JSON(http.StatusBadRequest, echo.Map{"error": "invalid request body"})
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
 		id := uuid.New().String()
 		now := time.Now()
 
-		_, err := db.Exec(ctx, `
-			INSERT INTO forms (id, question, status, created_at, updated_at)
-			VALUES ($1, $2, 'draft', $3, $3)
-		`, id, req.Question, now)
+		urgency := measureUrgency(context.Background(), req.Answer)
+
+		_, err := db.Exec(context.Background(), `
+			INSERT INTO forms (id, question, answer, status, created_at, updated_at, urgency )
+			VALUES ($1, $2, $3, 'draft', $4, $5, $6)
+		`, id, req.Question, req.Answer, now, now, &urgency)
 		if err != nil {
 			logger.Error("failed to insert form", err)
 			return c.JSON(http.StatusInternalServerError, echo.Map{"error": "failed to create form"})
@@ -114,9 +114,12 @@ func ListForms(db *pgxpool.Pool) echo.HandlerFunc {
 		if direction != "ASC" && direction != "DESC" {
 			direction = "DESC"
 		}
-		order := "ORDER BY created_at DESC"
+		order := "ORDER BY CASE urgency WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END "
 		if sort != "" {
-			if sort == "question" || sort == "answer" || sort == "urgency" || sort == "status" || sort == "created_at" {
+			if sort == "urgency" {
+				order += direction
+			}
+			if sort == "question" || sort == "answer" || sort == "status" || sort == "created_at" {
 				order = "ORDER BY " + sort + " " + direction
 			}
 		}
@@ -238,13 +241,14 @@ func measureUrgency(ctx context.Context, text string) string {
 		logger.Fatal("EMOTION_API_HOST not set", nil)
 	}
 
-	payload := strings.NewReader(`{ "text": ` + text + `}`)
+	payload := strings.NewReader(`{ "text": "` + text + `"}`)
 
 	url := fmt.Sprintf("%s/v1/analysis", host)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, payload)
 	if err != nil {
 		return urgency
 	}
+	request.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{}
 
@@ -268,11 +272,11 @@ func measureUrgency(ctx context.Context, text string) string {
 	for _, res := range output.FullResult {
 		switch res.Label {
 		case "joy", "surprise":
-			score += res.Score * 1.5
+			score -= res.Score * 1.5
 		case "neutral":
 			score += res.Score * 0.2
 		case "sadness", "anger", "disgust", "fear":
-			score -= res.Score * 1.2
+			score += res.Score * 1.2
 		}
 	}
 
@@ -287,6 +291,18 @@ func measureUrgency(ctx context.Context, text string) string {
 
 	return urgency
 }
+
+// urgencyMap := map[string]string{
+// 	"anger":    "high",
+// 	"disgust":  "high",
+// 	"fear":     "high",
+// 	"neutral":  "medium",
+// 	"surprise": "medium",
+// 	"joy":      "low",
+// 	"sadness":  "low",
+// }
+
+// return urgencyMap[output.Emotion]
 
 type output struct {
 	Emotion    string `json:"emotion"`
