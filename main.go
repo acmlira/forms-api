@@ -31,6 +31,7 @@ func main() {
 
 	e.PUT("/v1/forms/{id}", handlers.UpdateForm(conn))
 	e.GET("/v1/forms", handlers.ListForms(conn))
+	e.POST("/v1/forms", handlers.CreateForm(conn))
 
 	e.Logger.Fatal(e.Start(":8080"))
 }
