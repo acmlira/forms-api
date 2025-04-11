@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: form-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: formdb
+      POSTGRES_USER: formuser
+      POSTGRES_PASSWORD: secret123
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  form-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: form-api
+    depends_on:
+      - postgres
+    environment:
+      EMOTION_API_HOST: localhost:5000
+      DATABASE_URL: postgres://formuser:secret123@postgres:5432/formdb?sslmode=disable
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
